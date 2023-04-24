@@ -5,9 +5,8 @@ import "strings"
 type Options struct {
 	BucketName        string
 	IncomingPrefix    string
-	EmailDomainName   string
-	SenderAddress     string
 	ForwardingAddress string
+	ConfigurationSet  string
 }
 
 type UndefinedEnvVarsError struct {
@@ -33,9 +32,8 @@ func (env *environment) options() (*Options, error) {
 	opts := Options{}
 	env.assign(&opts.BucketName, "BUCKET_NAME")
 	env.assign(&opts.IncomingPrefix, "INCOMING_PREFIX")
-	env.assign(&opts.EmailDomainName, "EMAIL_DOMAIN_NAME")
-	env.assign(&opts.SenderAddress, "SENDER_ADDRESS")
 	env.assign(&opts.ForwardingAddress, "FORWARDING_ADDRESS")
+	env.assign(&opts.ConfigurationSet, "CONFIGURATION_SET")
 
 	if len(env.undefinedVars) != 0 {
 		return nil, &UndefinedEnvVarsError{UndefinedVars: env.undefinedVars}

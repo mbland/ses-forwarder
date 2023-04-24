@@ -13,8 +13,6 @@ Parameters:
   RecipientConditions:
     Description: "https://docs.aws.amazon.com/ses/latest/dg/receiving-email-receipt-rules-console-walkthrough.html"
     Type: String
-  SenderAddress:
-    Type: String
   ForwardingAddress:
     Type: String
   ReceiptRuleSetName:
@@ -38,9 +36,8 @@ Resources:
         Variables:
           BUCKET_NAME: !Ref BucketName
           INCOMING_PREFIX: !Ref IncomingPrefix
-          EMAIL_DOMAIN_NAME: !Ref EmailDomainName
-          SENDER_ADDRESS: !Ref SenderAddress
           FORWARDING_ADDRESS: !Ref ForwardingAddress
+          CONFIGURATION_SET: !Ref SendingConfigurationSet
 
   BucketPutPolicy:
     # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-policy.html

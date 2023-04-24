@@ -22,7 +22,6 @@ PARAMETER_OVERRIDES=(
   "IncomingPrefix=${INCOMING_PREFIX:?}"
   "EmailDomainName=${EMAIL_DOMAIN_NAME:?}"
   "RecipientConditions=${RECIPIENT_CONDITIONS//$'\n'/,}"
-  "SenderAddress=${SENDER_ADDRESS:?}"
   "ForwardingAddress=${FORWARDING_ADDRESS:?}"
   "ReceiptRuleSetName=${RECEIPT_RULE_SET_NAME:?}"
 )
