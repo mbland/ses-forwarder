@@ -3,14 +3,17 @@ package handler
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/ses"
 )
 
 type Handler struct {
-	Config  *aws.Config
+	S3      *s3.Client
+	Ses     *ses.Client
 	Options *Options
 	Log     *log.Logger
 }
@@ -28,11 +31,11 @@ func (h *Handler) HandleEvent(
 		return nil, fmt.Errorf("failed to forward message %s: %s", msgId, err)
 	}
 
-	if storedMsg, err := h.getStoredMessage(msgId); err != nil {
+	if storedMsg, err := h.getStoredMessage(ctx, msgId); err != nil {
 		return raiseErr(err)
 	} else if fwdMsg, err := h.createForwardedMessage(storedMsg); err != nil {
 		return raiseErr(err)
-	} else if err := h.send(fwdMsg); err != nil {
+	} else if err := h.send(ctx, fwdMsg); err != nil {
 		return raiseErr(err)
 	} else {
 		h.Log.Printf("successfully forwarded message %s", msgId)
@@ -44,8 +47,8 @@ func (h *Handler) HandleEvent(
 }
 
 type storedMessage struct {
-	// content string
-	// path    string
+	body io.ReadCloser
+	key  string
 }
 
 type forwardedMessage struct {
@@ -54,16 +57,26 @@ type forwardedMessage struct {
 	// content    string
 }
 
-func (h *Handler) getStoredMessage(msgId string) (*storedMessage, error) {
-	return nil, nil
+func (h *Handler) getStoredMessage(
+	ctx context.Context, msgId string,
+) (msg *storedMessage, err error) {
+	key := h.Options.IncomingPrefix + "/" + msgId
+	input := &s3.GetObjectInput{Bucket: &h.Options.BucketName, Key: &key}
+	var output *s3.GetObjectOutput
+
+	if output, err = h.S3.GetObject(ctx, input); err != nil {
+		return
+	}
+	msg = &storedMessage{output.Body, key}
+	return
 }
 
 func (h *Handler) createForwardedMessage(
 	msg *storedMessage,
-) (*forwardedMessage, error) {
-	return nil, nil
+) (fwdMsg *forwardedMessage, err error) {
+	return
 }
 
-func (h *Handler) send(msg *forwardedMessage) error {
+func (h *Handler) send(ctx context.Context, msg *forwardedMessage) error {
 	return nil
 }

@@ -7,6 +7,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/mbland/ses-forwarder/handler"
 )
 
@@ -17,7 +19,10 @@ func buildHandler() (*handler.Handler, error) {
 		return nil, err
 	} else {
 		return &handler.Handler{
-			Config: &cfg, Options: opts, Log: log.Default(),
+			S3:      s3.NewFromConfig(cfg),
+			Ses:     ses.NewFromConfig(cfg),
+			Options: opts,
+			Log:     log.Default(),
 		}, nil
 	}
 }
