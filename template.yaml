@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Amazon Simple Email Service Receipt Rule email forwarding system
+
+Parameters:
+  BucketName:
+    Type: String
+  IncomingPrefix:
+    Type: String
+  EmailDomainName:
+    Type: String
+  RecipientConditions:
+    Description: "https://docs.aws.amazon.com/ses/latest/dg/receiving-email-receipt-rules-console-walkthrough.html"
+    Type: String
+  SenderAddress:
+    Type: String
+  ForwardingAddress:
+    Type: String
+  ReceiptRuleSetName:
+    Type: String
+
+Resources:
+  Function:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Handler: ses-forwarder-lambda
+      Runtime: go1.x
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3ReadPolicy:
+            BucketName: !Ref BucketName
+        - SESCrudPolicy:
+            IdentityName: !Ref EmailDomainName
+      Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
+        Variables:
+          BUCKET_NAME: !Ref BucketName
+          INCOMING_PREFIX: !Ref IncomingPrefix
+          EMAIL_DOMAIN_NAME: !Ref EmailDomainName
+          SENDER_ADDRESS: !Ref SenderAddress
+          FORWARDING_ADDRESS: !Ref ForwardingAddress
+
+  BucketPutPolicy:
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-policy.html
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BucketName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: !Sub "${AWS::StackName}-bucket-put-policy"
+        Statement:
+          - Sid: "AllowSESPuts"
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action:
+              - "s3:PutObject"
+            Resource: !Sub "arn:aws:s3:::${BucketName}/*"
+            Condition:
+              StringEquals:
+                "aws:referer": !Sub "${AWS::AccountId}"
+
+  ReceiptRuleSetPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt Function.Arn
+      Principal: "ses.amazonaws.com"
+      SourceArn: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/${ReceiptRuleSetName}:receipt-rule/*"
+
+  ReceiptRule:
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ses-receiptrule.html
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ses-receiptruleset.html
+    Type: AWS::SES::ReceiptRule
+    Properties:
+      RuleSetName: !Ref ReceiptRuleSetName
+      Rule:
+        Name: !Ref AWS::StackName
+        Enabled: true
+        TlsPolicy: Require
+        ScanEnabled: true
+        Recipients: !Split [",", !Ref RecipientConditions]
+        Actions:
+          - S3Action:
+              BucketName: !Ref BucketName
+              ObjectKeyPrefix: !Ref IncomingPrefix
+          - LambdaAction:
+              FunctionArn: !GetAtt Function.Arn
+    DependsOn:
+      - BucketPutPolicy
+      - ReceiptRuleSetPermission
+
+  SendingConfigurationSet:
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ses-configurationset.html
+    Type: AWS::SES::ConfigurationSet
+    Properties:
+      Name: !Sub "${AWS::StackName}"
+      DeliveryOptions:
+        TlsPolicy: REQUIRE
+      SendingOptions:
+        SendingEnabled: true
+      SuppressionOptions:
+        SuppressedReasons:
+          - COMPLAINT
+          - BOUNCE
+
+Outputs:
+  Function:
+    Description: "Lambda function ARN"
+    Value: !GetAtt Function.Arn
+  FunctionIamRole:
+    Description: "Implicit IAM Role created for Lambda function"
+    Value: !GetAtt FunctionRole.Arn
