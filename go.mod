@@ -6,6 +6,7 @@ require (
 	github.com/aws/aws-lambda-go v1.40.0
 	github.com/aws/aws-sdk-go-v2 v1.17.8
 	github.com/aws/aws-sdk-go-v2/config v1.18.21
+	gotest.tools v2.2.0+incompatible
 	honnef.co/go/tools v0.4.3
 )
 
@@ -21,6 +22,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.14.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.18.9 // indirect
 	github.com/aws/smithy-go v1.13.5 // indirect
+	github.com/google/go-cmp v0.5.9 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20221208152030-732eee02a75a // indirect
 	golang.org/x/mod v0.10.0 // indirect
 	golang.org/x/sys v0.7.0 // indirect
