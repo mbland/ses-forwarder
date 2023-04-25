@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -40,18 +41,22 @@ func (h *Handler) HandleEvent(
 		return nil, fmt.Errorf("SES event contained no records: %+v", e)
 	}
 
-	key := h.Options.IncomingPrefix + "/" + e.Records[0].SES.Mail.MessageID
-	h.Log.Printf("forwarding message %s", key)
-	raiseErr := func(err error) (*events.SimpleEmailDisposition, error) {
-		return nil, fmt.Errorf("failed to forward message %s: %s", key, err)
+	sesInfo := &e.Records[0].SES
+	key := h.Options.IncomingPrefix + "/" + sesInfo.Mail.MessageID
+	logErr := func(err error) {
+		h.Log.Printf("failed to forward message %s: %s", key, err)
 	}
 
-	if orig, err := h.getOriginalMessage(ctx, key); err != nil {
-		return raiseErr(err)
+	h.Log.Printf("forwarding message %s", key)
+
+	if err := h.validateMessage(sesInfo); err != nil {
+		logErr(err)
+	} else if orig, err := h.getOriginalMessage(ctx, key); err != nil {
+		logErr(err)
 	} else if updated, err := h.updateMessage(orig, key); err != nil {
-		return raiseErr(err)
+		logErr(err)
 	} else if fwdId, err := h.forwardMessage(ctx, updated); err != nil {
-		return raiseErr(err)
+		logErr(err)
 	} else {
 		h.Log.Printf("successfully forwarded message %s as %s", key, fwdId)
 	}
@@ -61,6 +66,26 @@ func (h *Handler) HandleEvent(
 	}, nil
 }
 
+func (h *Handler) validateMessage(info *events.SimpleEmailService) error {
+	if bounceId, err := h.bounceIfDmarcFails(info); err != nil {
+		return err
+	} else if bounceId != "" {
+		return errors.New("DMARC bounced with bounce ID: " + bounceId)
+	} else if isSpam(info) {
+		return errors.New("marked as spam, ignoring")
+	}
+	return nil
+}
+
+func (h *Handler) bounceIfDmarcFails(
+	info *events.SimpleEmailService,
+) (string, error) {
+	return "", nil
+}
+
+func isSpam(info *events.SimpleEmailService) bool {
+	return false
+}
 func (h *Handler) getOriginalMessage(
 	ctx context.Context, key string,
 ) (msg []byte, err error) {
