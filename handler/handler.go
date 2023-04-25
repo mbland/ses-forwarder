@@ -14,8 +14,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ses/types"
 )
 
+type S3Api interface {
+	GetObject(
+		context.Context, *s3.GetObjectInput, ...func(*s3.Options),
+	) (*s3.GetObjectOutput, error)
+}
+
 type Handler struct {
-	S3      *s3.Client
+	S3      S3Api
 	Ses     *ses.Client
 	Options *Options
 	Log     *log.Logger
@@ -57,6 +63,9 @@ func (h *Handler) getOriginalMessage(
 
 	if output, err = h.S3.GetObject(ctx, input); err == nil {
 		msg, err = io.ReadAll(output.Body)
+	}
+	if err != nil {
+		err = fmt.Errorf("failed to get original message: %s", err)
 	}
 	return
 }
