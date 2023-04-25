@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"gotest.tools/assert"
 )
 
@@ -93,5 +94,58 @@ func TestGetOriginalMessage(t *testing.T) {
 		assert.Equal(t, len(msg), 0)
 		expected := "failed to get original message: test read error"
 		assert.ErrorContains(t, err, expected)
+	})
+}
+
+type TestSes struct {
+	input     *ses.SendRawEmailInput
+	output    *ses.SendRawEmailOutput
+	returnErr error
+}
+
+func (ses *TestSes) SendRawEmail(
+	ctx context.Context, input *ses.SendRawEmailInput, _ ...func(*ses.Options),
+) (*ses.SendRawEmailOutput, error) {
+	ses.input = input
+	return ses.output, ses.returnErr
+}
+
+func TestForwardMessage(t *testing.T) {
+	var forwardedMsgId string = "forwardedMsgId"
+
+	setup := func() (*TestSes, *Handler, context.Context) {
+		testSes := &TestSes{output: &ses.SendRawEmailOutput{}}
+		opts := &Options{
+			ForwardingAddress: "quux@xyzzy.com",
+			ConfigurationSet:  "ses-forwarder",
+		}
+		ctx := context.Background()
+		return testSes, &Handler{Ses: testSes, Options: opts}, ctx
+	}
+
+	t.Run("Succeeds", func(t *testing.T) {
+		testSes, h, ctx := setup()
+		testSes.output.MessageId = &forwardedMsgId
+		fwdAddr := h.Options.ForwardingAddress
+		configSet := h.Options.ConfigurationSet
+		msg := []byte("Hello, world!")
+
+		fwdId, err := h.forwardMessage(ctx, msg)
+
+		assert.NilError(t, err)
+		assert.Equal(t, forwardedMsgId, fwdId)
+		assert.DeepEqual(t, []string{fwdAddr}, testSes.input.Destinations)
+		assert.Equal(t, configSet, *testSes.input.ConfigurationSetName)
+		assert.DeepEqual(t, msg, testSes.input.RawMessage.Data)
+	})
+
+	t.Run("ErrorsIfSendingFails", func(t *testing.T) {
+		testSes, h, ctx := setup()
+		testSes.returnErr = errors.New("SES test error")
+
+		fwdId, err := h.forwardMessage(ctx, []byte("Hello, world!"))
+
+		assert.Equal(t, "", fwdId)
+		assert.ErrorContains(t, err, "send failed: SES test error")
 	})
 }

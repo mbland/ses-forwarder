@@ -20,9 +20,15 @@ type S3Api interface {
 	) (*s3.GetObjectOutput, error)
 }
 
+type SesApi interface {
+	SendRawEmail(
+		context.Context, *ses.SendRawEmailInput, ...func(*ses.Options),
+	) (*ses.SendRawEmailOutput, error)
+}
+
 type Handler struct {
 	S3      S3Api
-	Ses     *ses.Client
+	Ses     SesApi
 	Options *Options
 	Log     *log.Logger
 }
@@ -150,7 +156,9 @@ func (h *Handler) forwardMessage(
 	}
 	var output *ses.SendRawEmailOutput
 
-	if output, err = h.Ses.SendRawEmail(ctx, sesMsg); err == nil {
+	if output, err = h.Ses.SendRawEmail(ctx, sesMsg); err != nil {
+		err = fmt.Errorf("send failed: %s", err)
+	} else {
 		forwardedMessageId = *output.MessageId
 	}
 	return
