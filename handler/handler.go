@@ -76,78 +76,23 @@ func (h *Handler) getOriginalMessage(
 	return
 }
 
-var keepHeaders = map[string]bool{
-	"From":         true,
-	"To":           true,
-	"Cc":           true,
-	"Bcc":          true,
-	"Subject":      true,
-	"Reply-To":     true,
-	"Content-Type": true,
-	"MIME-Version": true,
-	"Mime-Version": true,
-}
-
 func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 	m, err := mail.ReadMessage(bytes.NewReader(msg))
 	if err != nil {
 		return nil, err
 	}
 
-	origFrom := m.Header.Get("From")
-	newFrom, err := h.newFromAddress(origFrom)
-	if err != nil {
+	b := &bytes.Buffer{}
+	hb := headerBuffer{
+		b, m.Header, h.Options.SenderAddress, h.Options.BucketName, key, nil,
+	}
+
+	if err = hb.WriteUpdatedHeaders(); err != nil {
 		return nil, err
-	}
-
-	var b bytes.Buffer
-	emitReplyTo := false
-
-	for header, values := range m.Header {
-		if !keepHeaders[header] {
-			continue
-		} else if header == "From" {
-			values = []string{newFrom}
-			emitReplyTo = m.Header.Get("Reply-To") == ""
-		} else if header == "Mime-Version" {
-			header = "MIME-Version"
-		}
-		for _, value := range values {
-			b.Write([]byte(header))
-			b.Write([]byte(": "))
-			b.Write([]byte(value))
-			b.Write([]byte("\r\n"))
-		}
-		if emitReplyTo {
-			b.Write([]byte("Reply-To: "))
-			b.Write([]byte(origFrom))
-			b.Write([]byte("\r\n"))
-			emitReplyTo = false
-		}
-	}
-	b.Write([]byte("X-SES-Forwarder-Original: s3://"))
-	b.Write([]byte(h.Options.BucketName))
-	b.Write([]byte("/"))
-	b.Write([]byte(key))
-	b.Write([]byte("\r\n\r\n"))
-
-	_, err = b.ReadFrom(m.Body)
-	if err != nil {
+	} else if _, err = b.ReadFrom(m.Body); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil
-}
-
-func (h *Handler) newFromAddress(oldFrom string) (string, error) {
-	fromAddr, err := mail.ParseAddress(oldFrom)
-	if err != nil {
-		return "", fmt.Errorf("couldn't extract From address: %s", err)
-	}
-
-	const newFromFmt = "%s at %s <%s>"
-	return fmt.Sprintf(
-		newFromFmt, fromAddr.Name, fromAddr.Address, h.Options.SenderAddress,
-	), nil
 }
 
 func (h *Handler) forwardMessage(

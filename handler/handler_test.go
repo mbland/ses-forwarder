@@ -14,25 +14,6 @@ import (
 	"gotest.tools/assert"
 )
 
-func TestNewFromAddress(t *testing.T) {
-	h := Handler{Options: &Options{SenderAddress: "ses-forwarder@foo.com"}}
-
-	t.Run("Succeeds", func(t *testing.T) {
-		newFrom, err := h.newFromAddress("Mike Bland <mbland@acm.org>")
-
-		assert.NilError(t, err)
-		expected := "Mike Bland at mbland@acm.org <ses-forwarder@foo.com>"
-		assert.Equal(t, expected, newFrom)
-	})
-
-	t.Run("FailsIfOriginalFromMalformed", func(t *testing.T) {
-		newFrom, err := h.newFromAddress("Mike Bland mbland@acm.org")
-
-		assert.Equal(t, "", newFrom)
-		assert.ErrorContains(t, err, "couldn't extract From address: ")
-	})
-}
-
 type TestS3 struct {
 	input     *s3.GetObjectInput
 	output    *s3.GetObjectOutput
