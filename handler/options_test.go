@@ -26,6 +26,7 @@ func TestReportUndefinedEnviromentVariables(t *testing.T) {
 			UndefinedVars: []string{
 				"BUCKET_NAME",
 				"INCOMING_PREFIX",
+				"SENDER_ADDRESS",
 				"FORWARDING_ADDRESS",
 				"CONFIGURATION_SET",
 			},
@@ -37,6 +38,7 @@ func TestAllRequiredEnvironmentVariablesDefined(t *testing.T) {
 	env := map[string]string{
 		"BUCKET_NAME":        "my-bucket",
 		"INCOMING_PREFIX":    "inbox",
+		"SENDER_ADDRESS":     "inbox@foo.com",
 		"FORWARDING_ADDRESS": "me@bar.com",
 		"CONFIGURATION_SET":  "config-set",
 	}
@@ -51,6 +53,7 @@ func TestAllRequiredEnvironmentVariablesDefined(t *testing.T) {
 		&Options{
 			BucketName:        "my-bucket",
 			IncomingPrefix:    "inbox",
+			SenderAddress:     "inbox@foo.com",
 			ForwardingAddress: "me@bar.com",
 			ConfigurationSet:  "config-set",
 		},

@@ -5,6 +5,7 @@ import "strings"
 type Options struct {
 	BucketName        string
 	IncomingPrefix    string
+	SenderAddress     string
 	ForwardingAddress string
 	ConfigurationSet  string
 }
@@ -32,6 +33,7 @@ func (env *environment) options() (*Options, error) {
 	opts := Options{}
 	env.assign(&opts.BucketName, "BUCKET_NAME")
 	env.assign(&opts.IncomingPrefix, "INCOMING_PREFIX")
+	env.assign(&opts.SenderAddress, "SENDER_ADDRESS")
 	env.assign(&opts.ForwardingAddress, "FORWARDING_ADDRESS")
 	env.assign(&opts.ConfigurationSet, "CONFIGURATION_SET")
 

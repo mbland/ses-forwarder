@@ -30,12 +30,17 @@ Resources:
         - AWSLambdaBasicExecutionRole
         - S3ReadPolicy:
             BucketName: !Ref BucketName
-        - SESCrudPolicy:
-            IdentityName: !Ref EmailDomainName
+        - Statement:
+            Sid: SESSendEmailPolicy
+            Effect: Allow
+            Action:
+              - "ses:SendRawEmail"
+            Resource: "*"
       Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
         Variables:
           BUCKET_NAME: !Ref BucketName
           INCOMING_PREFIX: !Ref IncomingPrefix
+          SENDER_ADDRESS: !Sub "${AWS::StackName}@${EmailDomainName}"
           FORWARDING_ADDRESS: !Ref ForwardingAddress
           CONFIGURATION_SET: !Ref SendingConfigurationSet
 
