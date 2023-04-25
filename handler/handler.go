@@ -125,7 +125,9 @@ func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 			emitReplyTo = false
 		}
 	}
-	b.Write([]byte("\r\n"))
+	b.Write([]byte("X-SES-Forwarder-Original: s3://"))
+	b.Write([]byte(key))
+	b.Write([]byte("\r\n\r\n"))
 
 	_, err = b.ReadFrom(m.Body)
 	if err != nil {

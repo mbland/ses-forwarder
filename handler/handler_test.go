@@ -149,3 +149,7 @@ func TestForwardMessage(t *testing.T) {
 		assert.ErrorContains(t, err, "send failed: SES test error")
 	})
 }
+
+func TestUpdateMessage(t *testing.T) {
+
+}
