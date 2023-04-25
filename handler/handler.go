@@ -126,6 +126,8 @@ func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 		}
 	}
 	b.Write([]byte("X-SES-Forwarder-Original: s3://"))
+	b.Write([]byte(h.Options.BucketName))
+	b.Write([]byte("/"))
 	b.Write([]byte(key))
 	b.Write([]byte("\r\n\r\n"))
 
