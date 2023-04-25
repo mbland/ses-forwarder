@@ -122,7 +122,7 @@ func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 func (h *Handler) newFromAddress(oldFrom string) (string, error) {
 	fromAddr, err := mail.ParseAddress(oldFrom)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("couldn't extract From address: %s", err)
 	}
 
 	const newFromFmt = "%s at %s <%s>"
