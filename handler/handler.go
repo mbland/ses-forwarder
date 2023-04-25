@@ -57,27 +57,26 @@ func (h *Handler) getOriginalMessage(
 
 	if output, err = h.S3.GetObject(ctx, input); err == nil {
 		msg, err = io.ReadAll(output.Body)
-		output.Body.Close()
 	}
 	return
+}
+
+var keepHeaders = map[string]bool{
+	"From":         true,
+	"To":           true,
+	"Cc":           true,
+	"Bcc":          true,
+	"Subject":      true,
+	"Reply-To":     true,
+	"Content-Type": true,
+	"MIME-Version": true,
+	"Mime-Version": true,
 }
 
 func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 	m, err := mail.ReadMessage(bytes.NewReader(msg))
 	if err != nil {
 		return nil, err
-	}
-
-	keepHeaders := map[string]bool{
-		"From":         true,
-		"To":           true,
-		"Cc":           true,
-		"Bcc":          true,
-		"Subject":      true,
-		"Reply-To":     true,
-		"Content-Type": true,
-		"MIME-Version": true,
-		"Mime-Version": true,
 	}
 
 	origFrom := m.Header.Get("From")
@@ -113,11 +112,10 @@ func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 	}
 	b.Write([]byte("\r\n"))
 
-	body, err := io.ReadAll(m.Body)
+	_, err = b.ReadFrom(m.Body)
 	if err != nil {
 		return nil, err
 	}
-	b.Write(body)
 	return b.Bytes(), nil
 }
 
