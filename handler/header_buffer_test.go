@@ -17,7 +17,7 @@ func TestNewFromAddress(t *testing.T) {
 		)
 
 		assert.NilError(t, err)
-		expected := "Mike Bland at mbland@acm.org <ses-forwarder@foo.com>"
+		expected := "Mike Bland - mbland at acm.org <ses-forwarder@foo.com>"
 		assert.Equal(t, expected, newFrom)
 	})
 

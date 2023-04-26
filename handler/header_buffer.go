@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/mail"
+	"strings"
 )
 
 type headerBuffer struct {
@@ -69,8 +70,19 @@ func newFromAddress(origFrom, newFrom string) (result string, err error) {
 	if addr, err = mail.ParseAddress(origFrom); err != nil {
 		err = fmt.Errorf("couldn't parse From address %s: %s", origFrom, err)
 	} else {
-		const newFromFmt = "%s at %s <%s>"
-		result = fmt.Sprintf(newFromFmt, addr.Name, addr.Address, newFrom)
+		name := ""
+		if addr.Name != "" {
+			name = addr.Name + " - "
+		}
+
+		// Gmail parses the first address out of the From header for the purpose
+		// of checking SPF and DMARC status. It will ignore a later address
+		// appearing within angle brackets, which should be treated as the
+		// actual From address. Replacing the "@" with " at " in the original
+		// address avoids this problem, confirmed by Gmail's "Show Original"
+		// message view.
+		addrReplaced := strings.Replace(addr.Address, "@", " at ", 1)
+		result = name + addrReplaced + " <" + newFrom + ">"
 	}
 	return
 }

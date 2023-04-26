@@ -192,7 +192,7 @@ func TestUpdateMessage(t *testing.T) {
 		assert.NilError(t, err)
 		// The headers appear in the same order as keepHeaders.
 		expected := strings.Join([]string{
-			`From: Mike Bland at mbland@acm.org <` + opts.SenderAddress + `>`,
+			`From: Mike Bland - mbland at acm.org <` + opts.SenderAddress + `>`,
 			`Reply-To: Mike Bland <mbland@acm.org>`,
 			`To: foo@xyzzy.com`,
 			`Cc: foo@bar.com`,
