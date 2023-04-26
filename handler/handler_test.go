@@ -142,5 +142,68 @@ func TestForwardMessage(t *testing.T) {
 }
 
 func TestUpdateMessage(t *testing.T) {
+	setup := func() (*Handler, *Options) {
+		opts := &Options{
+			BucketName:        "xyzzy.com",
+			SenderAddress:     "ses-updater@xyzzy.com",
+			ForwardingAddress: "quux@xyzzy.com",
+			ConfigurationSet:  "ses-forwarder",
+		}
+		return &Handler{Options: opts}, opts
+	}
 
+	beforeHeaders := strings.Join([]string{
+		`Return-Path: <bounce@foo.com>`,
+		`Received: ...`,
+		` by ...`,
+		`X-SES-Spam-Verdict: PASS`,
+		`MIME-Version: 1.0`,
+		`From: Mike Bland <mbland@acm.org>`,
+		`Cc: foo@bar.com`,
+		`Bcc: bar@baz.com`,
+		`Date: Fri, 18 Sep 1970 12:45:00 +0000`,
+		`Message-ID: <...>`,
+		`Subject: There's a reason why we unit test`,
+		`To: foo@xyzzy.com`,
+		`Content-Type: multipart/alternative; boundary="random-string"`,
+	}, "\r\n")
+	msgBody := strings.Join([]string{
+		`--random-string`,
+		`Content-Type: text/plain; charset="UTF-8"`,
+		``,
+		`Sometimes the getting smallest detail wrong breaks everything.`,
+		``,
+		`--random-string`,
+		`Content-Type: text/html; charset="UTF-8"`,
+		``,
+		`<div dir="ltr">Sometimes the getting smallest detail wrong`,
+		`breaks everything.</div>`,
+		``,
+		`--random-string--`,
+	}, "\r\n")
+
+	t.Run("Succeeds", func(t *testing.T) {
+		h, opts := setup()
+		testMsg := []byte(beforeHeaders + "\r\n\r\n" + msgBody)
+		msgKey := "prefix/msgId"
+
+		result, err := h.updateMessage(testMsg, msgKey)
+
+		assert.NilError(t, err)
+		// The headers appear in the same order as keepHeaders.
+		expected := strings.Join([]string{
+			`From: Mike Bland at mbland@acm.org <` + opts.SenderAddress + `>`,
+			`Reply-To: Mike Bland <mbland@acm.org>`,
+			`To: foo@xyzzy.com`,
+			`Cc: foo@bar.com`,
+			`Bcc: bar@baz.com`,
+			`Subject: There's a reason why we unit test`,
+			`MIME-Version: 1.0`,
+			`Content-Type: multipart/alternative; boundary="random-string"`,
+			`X-SES-Forwarder-Original: s3://` + opts.BucketName + `/` + msgKey,
+			``,
+			msgBody,
+		}, "\r\n")
+		assert.Equal(t, expected, string(result))
+	})
 }

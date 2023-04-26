@@ -18,29 +18,29 @@ type updateHeadersInput struct {
 	msgKey        string
 }
 
-var keepHeaders = map[string]bool{
-	"To":           true,
-	"Cc":           true,
-	"Bcc":          true,
-	"Subject":      true,
-	"Reply-To":     true,
-	"Content-Type": true,
-	"MIME-Version": true,
-	"Mime-Version": true,
+var keepHeaders = []string{
+	"Reply-To",
+	"To",
+	"Cc",
+	"Bcc",
+	"Subject",
+	"MIME-Version",
+	"Mime-Version",
+	"Content-Type",
 }
+
+const crlf = "\r\n"
 
 func (hb *headerBuffer) WriteUpdatedHeaders(input *updateHeadersInput) error {
 	hb.writeFromHeader(input.headers, input.senderAddress)
 
-	for header, values := range input.headers {
-		if header == "Mime-Version" {
-			header = "MIME-Version"
-		}
-		if keepHeaders[header] {
+	for _, header := range keepHeaders {
+		if values, ok := input.headers[header]; ok {
 			hb.writeHeader(header, values)
 		}
 	}
 	hb.writeFinalSesForwarderOrigLinkHeader(input.bucketName, input.msgKey)
+	hb.write(crlf)
 
 	if hb.err != nil {
 		return fmt.Errorf("error while updating email headers: %s", hb.err)
@@ -72,27 +72,25 @@ func (hb *headerBuffer) newFromAddress(origFrom, newFrom string) string {
 	return fmt.Sprintf(newFromFmt, fromAddr.Name, fromAddr.Address, newFrom)
 }
 
-const crlf = "\r\n"
-
 func (hb *headerBuffer) writeFinalSesForwarderOrigLinkHeader(
 	bucketName, msgKey string,
 ) {
 	origLink := "s3://" + bucketName + "/" + msgKey
 	hb.writeHeader("X-SES-Forwarder-Original", []string{origLink})
-	hb.write(crlf + crlf)
 }
 
 func (hb *headerBuffer) writeHeader(name string, values []string) {
+	if name == "Mime-Version" {
+		name = "MIME-Version"
+	}
+
 	for _, value := range values {
-		hb.write(name)
-		hb.write(": ")
-		hb.write(value)
-		hb.write(crlf)
+		hb.write(name + ": " + value + crlf)
 	}
 }
 
 func (hb *headerBuffer) write(s string) {
-	if hb.err != nil {
+	if hb.err == nil {
 		_, hb.err = hb.buf.Write([]byte(s))
 	}
 }
