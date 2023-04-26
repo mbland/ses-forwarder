@@ -15,8 +15,7 @@ type headerBuffer struct {
 type updateHeadersInput struct {
 	headers       mail.Header
 	senderAddress string
-	bucketName    string
-	msgKey        string
+	msgPath       string
 }
 
 var keepHeaders = []string{
@@ -30,7 +29,7 @@ var keepHeaders = []string{
 	"Content-Type",
 }
 
-const crlf = "\r\n"
+const origLinkHeaderPrefix = "X-SES-Forwarder-Original: s3://"
 
 func (hb *headerBuffer) WriteUpdatedHeaders(input *updateHeadersInput) error {
 	hb.writeFromHeader(input.headers, input.senderAddress)
@@ -40,8 +39,7 @@ func (hb *headerBuffer) WriteUpdatedHeaders(input *updateHeadersInput) error {
 			hb.writeHeader(header, values)
 		}
 	}
-	hb.writeFinalSesForwarderOrigLinkHeader(input.bucketName, input.msgKey)
-	hb.write(crlf)
+	hb.write(origLinkHeaderPrefix + input.msgPath + "\r\n\r\n")
 
 	if hb.err != nil {
 		return fmt.Errorf("error while updating email headers: %s", hb.err)
@@ -70,9 +68,8 @@ func newFromAddress(origFrom, newFrom string) (result string, err error) {
 	if addr, err = mail.ParseAddress(origFrom); err != nil {
 		err = fmt.Errorf("couldn't parse From address %s: %s", origFrom, err)
 	} else {
-		name := ""
 		if addr.Name != "" {
-			name = addr.Name + " - "
+			addr.Name += " - "
 		}
 
 		// Gmail parses the first address out of the From header for the purpose
@@ -82,16 +79,9 @@ func newFromAddress(origFrom, newFrom string) (result string, err error) {
 		// address avoids this problem, confirmed by Gmail's "Show Original"
 		// message view.
 		addrReplaced := strings.Replace(addr.Address, "@", " at ", 1)
-		result = name + addrReplaced + " <" + newFrom + ">"
+		result = addr.Name + addrReplaced + " <" + newFrom + ">"
 	}
 	return
-}
-
-func (hb *headerBuffer) writeFinalSesForwarderOrigLinkHeader(
-	bucketName, msgKey string,
-) {
-	origLink := "s3://" + bucketName + "/" + msgKey
-	hb.writeHeader("X-SES-Forwarder-Original", []string{origLink})
 }
 
 func (hb *headerBuffer) writeHeader(name string, values []string) {
@@ -100,7 +90,7 @@ func (hb *headerBuffer) writeHeader(name string, values []string) {
 	}
 
 	for _, value := range values {
-		hb.write(name + ": " + value + crlf)
+		hb.write(name + ": " + value + "\r\n")
 	}
 }
 
