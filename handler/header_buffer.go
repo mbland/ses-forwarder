@@ -50,7 +50,9 @@ func (hb *headerBuffer) WriteUpdatedHeaders(input *updateHeadersInput) error {
 
 func (hb *headerBuffer) writeFromHeader(headers mail.Header, sender string) {
 	origFrom := headers.Get("From")
-	newFrom := hb.newFromAddress(origFrom, sender)
+	var newFrom string
+
+	newFrom, hb.err = newFromAddress(origFrom, sender)
 	if hb.err != nil {
 		return
 	}
@@ -61,15 +63,16 @@ func (hb *headerBuffer) writeFromHeader(headers mail.Header, sender string) {
 	}
 }
 
-func (hb *headerBuffer) newFromAddress(origFrom, newFrom string) string {
-	fromAddr, err := mail.ParseAddress(origFrom)
-	if err != nil {
-		hb.err = fmt.Errorf("couldn't parse From address %s: %s", origFrom, err)
-		return ""
-	}
+func newFromAddress(origFrom, newFrom string) (result string, err error) {
+	var addr *mail.Address
 
-	const newFromFmt = "%s at %s <%s>"
-	return fmt.Sprintf(newFromFmt, fromAddr.Name, fromAddr.Address, newFrom)
+	if addr, err = mail.ParseAddress(origFrom); err != nil {
+		err = fmt.Errorf("couldn't parse From address %s: %s", origFrom, err)
+	} else {
+		const newFromFmt = "%s at %s <%s>"
+		result = fmt.Sprintf(newFromFmt, addr.Name, addr.Address, newFrom)
+	}
+	return
 }
 
 func (hb *headerBuffer) writeFinalSesForwarderOrigLinkHeader(
