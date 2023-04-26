@@ -79,23 +79,33 @@ func TestGetOriginalMessage(t *testing.T) {
 }
 
 type TestSes struct {
-	input     *ses.SendRawEmailInput
-	output    *ses.SendRawEmailOutput
-	returnErr error
+	rawEmailInput  *ses.SendRawEmailInput
+	rawEmailOutput *ses.SendRawEmailOutput
+	rawEmailErr    error
+	bounceInput    *ses.SendBounceInput
+	bounceOutput   *ses.SendBounceOutput
+	bounceErr      error
 }
 
 func (ses *TestSes) SendRawEmail(
 	ctx context.Context, input *ses.SendRawEmailInput, _ ...func(*ses.Options),
 ) (*ses.SendRawEmailOutput, error) {
-	ses.input = input
-	return ses.output, ses.returnErr
+	ses.rawEmailInput = input
+	return ses.rawEmailOutput, ses.rawEmailErr
+}
+
+func (ses *TestSes) SendBounce(
+	ctx context.Context, input *ses.SendBounceInput, _ ...func(*ses.Options),
+) (*ses.SendBounceOutput, error) {
+	ses.bounceInput = input
+	return ses.bounceOutput, ses.bounceErr
 }
 
 func TestForwardMessage(t *testing.T) {
 	var forwardedMsgId string = "forwardedMsgId"
 
 	setup := func() (*TestSes, *Handler, context.Context) {
-		testSes := &TestSes{output: &ses.SendRawEmailOutput{}}
+		testSes := &TestSes{rawEmailOutput: &ses.SendRawEmailOutput{}}
 		opts := &Options{
 			ForwardingAddress: "quux@xyzzy.com",
 			ConfigurationSet:  "ses-forwarder",
@@ -106,7 +116,7 @@ func TestForwardMessage(t *testing.T) {
 
 	t.Run("Succeeds", func(t *testing.T) {
 		testSes, h, ctx := setup()
-		testSes.output.MessageId = &forwardedMsgId
+		testSes.rawEmailOutput.MessageId = &forwardedMsgId
 		fwdAddr := h.Options.ForwardingAddress
 		configSet := h.Options.ConfigurationSet
 		msg := []byte("Hello, world!")
@@ -115,14 +125,14 @@ func TestForwardMessage(t *testing.T) {
 
 		assert.NilError(t, err)
 		assert.Equal(t, forwardedMsgId, fwdId)
-		assert.DeepEqual(t, []string{fwdAddr}, testSes.input.Destinations)
-		assert.Equal(t, configSet, *testSes.input.ConfigurationSetName)
-		assert.DeepEqual(t, msg, testSes.input.RawMessage.Data)
+		assert.DeepEqual(t, []string{fwdAddr}, testSes.rawEmailInput.Destinations)
+		assert.Equal(t, configSet, *testSes.rawEmailInput.ConfigurationSetName)
+		assert.DeepEqual(t, msg, testSes.rawEmailInput.RawMessage.Data)
 	})
 
 	t.Run("ErrorsIfSendingFails", func(t *testing.T) {
 		testSes, h, ctx := setup()
-		testSes.returnErr = errors.New("SES test error")
+		testSes.rawEmailErr = errors.New("SES test error")
 
 		fwdId, err := h.forwardMessage(ctx, []byte("Hello, world!"))
 

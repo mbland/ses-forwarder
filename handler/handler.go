@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"net/mail"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -25,6 +27,10 @@ type SesApi interface {
 	SendRawEmail(
 		context.Context, *ses.SendRawEmailInput, ...func(*ses.Options),
 	) (*ses.SendRawEmailOutput, error)
+
+	SendBounce(
+		context.Context, *ses.SendBounceInput, ...func(*ses.Options),
+	) (*ses.SendBounceOutput, error)
 }
 
 type Handler struct {
@@ -49,7 +55,7 @@ func (h *Handler) HandleEvent(
 
 	h.Log.Printf("forwarding message %s", key)
 
-	if err := h.validateMessage(sesInfo); err != nil {
+	if err := h.validateMessage(ctx, sesInfo); err != nil {
 		logErr(err)
 	} else if orig, err := h.getOriginalMessage(ctx, key); err != nil {
 		logErr(err)
@@ -66,8 +72,10 @@ func (h *Handler) HandleEvent(
 	}, nil
 }
 
-func (h *Handler) validateMessage(info *events.SimpleEmailService) error {
-	if bounceId, err := h.bounceIfDmarcFails(info); err != nil {
+func (h *Handler) validateMessage(
+	ctx context.Context, info *events.SimpleEmailService,
+) error {
+	if bounceId, err := h.bounceIfDmarcFails(ctx, info); err != nil {
 		return err
 	} else if bounceId != "" {
 		return errors.New("DMARC bounced with bounce ID: " + bounceId)
@@ -77,15 +85,59 @@ func (h *Handler) validateMessage(info *events.SimpleEmailService) error {
 	return nil
 }
 
+// https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-lambda-example-functions.html
 func (h *Handler) bounceIfDmarcFails(
-	info *events.SimpleEmailService,
-) (string, error) {
-	return "", nil
+	ctx context.Context, info *events.SimpleEmailService,
+) (bounceMessageId string, err error) {
+	verdict := strings.ToUpper(info.Receipt.DMARCVerdict.Status)
+	policy := strings.ToUpper(info.Receipt.DMARCPolicy)
+
+	if verdict != "FAIL" || policy != "REJECT" {
+		return
+	}
+
+	sender := "mailer-daemon@" + h.Options.EmailDomainName
+	recipients := info.Receipt.Recipients
+	recipientInfo := make([]types.BouncedRecipientInfo, len(recipients))
+	reportingMta := "dns; " + h.Options.EmailDomainName
+	arrivalDate := time.Now().Truncate(time.Second)
+	explanation := "Unauthenticated email is not accepted due to " +
+		"the sending domain's DMARC policy."
+
+	for i, recipient := range recipients {
+		recipientInfo[i].Recipient = &recipient
+		recipientInfo[i].BounceType = types.BounceTypeContentRejected
+	}
+
+	input := &ses.SendBounceInput{
+		BounceSender:      &sender,
+		OriginalMessageId: &info.Mail.MessageID,
+		MessageDsn: &types.MessageDsn{
+			ReportingMta: &reportingMta,
+			ArrivalDate:  &arrivalDate,
+		},
+		Explanation:              &explanation,
+		BouncedRecipientInfoList: recipientInfo,
+	}
+	var output *ses.SendBounceOutput
+
+	if output, err = h.Ses.SendBounce(ctx, input); err != nil {
+		err = fmt.Errorf("DMARC bounce failed: %s", err)
+	} else {
+		bounceMessageId = *output.MessageId
+	}
+	return
 }
 
+// https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-lambda-example-functions.html
 func isSpam(info *events.SimpleEmailService) bool {
-	return false
+	receipt := &info.Receipt
+	return strings.ToUpper(receipt.SPFVerdict.Status) == "FAIL" ||
+		strings.ToUpper(receipt.DKIMVerdict.Status) == "FAIL" ||
+		strings.ToUpper(receipt.SpamVerdict.Status) == "FAIL" ||
+		strings.ToUpper(receipt.VirusVerdict.Status) == "FAIL"
 }
+
 func (h *Handler) getOriginalMessage(
 	ctx context.Context, key string,
 ) (msg []byte, err error) {
