@@ -7,15 +7,16 @@ import (
 )
 
 type headerBuffer struct {
-	buf           io.Writer
+	buf io.Writer
+	err error
+}
+
+type updateHeadersInput struct {
 	headers       mail.Header
 	senderAddress string
 	bucketName    string
 	msgKey        string
-	err           error
 }
-
-const crlf = "\r\n"
 
 var keepHeaders = map[string]bool{
 	"To":           true,
@@ -28,15 +29,18 @@ var keepHeaders = map[string]bool{
 	"Mime-Version": true,
 }
 
-func (hb *headerBuffer) WriteUpdatedHeaders() error {
-	hb.WriteFromHeader()
+func (hb *headerBuffer) WriteUpdatedHeaders(input *updateHeadersInput) error {
+	hb.writeFromHeader(input.headers, input.senderAddress)
 
-	for header, values := range hb.headers {
+	for header, values := range input.headers {
+		if header == "Mime-Version" {
+			header = "MIME-Version"
+		}
 		if keepHeaders[header] {
-			hb.WriteHeader(header, values)
+			hb.writeHeader(header, values)
 		}
 	}
-	hb.WriteFinalSesForwarderOrigLinkHeader()
+	hb.writeFinalSesForwarderOrigLinkHeader(input.bucketName, input.msgKey)
 
 	if hb.err != nil {
 		return fmt.Errorf("error while updating email headers: %s", hb.err)
@@ -44,20 +48,20 @@ func (hb *headerBuffer) WriteUpdatedHeaders() error {
 	return nil
 }
 
-func (hb *headerBuffer) WriteFromHeader() {
-	origFrom := hb.headers.Get("From")
-	newFrom := hb.newFromAddress(origFrom)
+func (hb *headerBuffer) writeFromHeader(headers mail.Header, sender string) {
+	origFrom := headers.Get("From")
+	newFrom := hb.newFromAddress(origFrom, sender)
 	if hb.err != nil {
 		return
 	}
 
-	hb.WriteHeader("From", []string{newFrom})
-	if hb.headers.Get("Reply-To") == "" {
-		hb.WriteHeader("Reply-To", []string{origFrom})
+	hb.writeHeader("From", []string{newFrom})
+	if headers.Get("Reply-To") == "" {
+		hb.writeHeader("Reply-To", []string{origFrom})
 	}
 }
 
-func (hb *headerBuffer) newFromAddress(origFrom string) string {
+func (hb *headerBuffer) newFromAddress(origFrom, newFrom string) string {
 	fromAddr, err := mail.ParseAddress(origFrom)
 	if err != nil {
 		hb.err = fmt.Errorf("couldn't parse From address %s: %s", origFrom, err)
@@ -65,30 +69,29 @@ func (hb *headerBuffer) newFromAddress(origFrom string) string {
 	}
 
 	const newFromFmt = "%s at %s <%s>"
-	return fmt.Sprintf(
-		newFromFmt, fromAddr.Name, fromAddr.Address, hb.senderAddress,
-	)
+	return fmt.Sprintf(newFromFmt, fromAddr.Name, fromAddr.Address, newFrom)
 }
 
-func (hb *headerBuffer) WriteFinalSesForwarderOrigLinkHeader() {
-	origLink := "s3://" + hb.bucketName + "/" + hb.msgKey
-	hb.WriteHeader("X-SES-Forwarder-Original", []string{origLink})
-	hb.Write(crlf + crlf)
+const crlf = "\r\n"
+
+func (hb *headerBuffer) writeFinalSesForwarderOrigLinkHeader(
+	bucketName, msgKey string,
+) {
+	origLink := "s3://" + bucketName + "/" + msgKey
+	hb.writeHeader("X-SES-Forwarder-Original", []string{origLink})
+	hb.write(crlf + crlf)
 }
 
-func (hb *headerBuffer) WriteHeader(name string, values []string) {
-	if name == "Mime-Version" {
-		name = "MIME-Version"
-	}
+func (hb *headerBuffer) writeHeader(name string, values []string) {
 	for _, value := range values {
-		hb.Write(name)
-		hb.Write(": ")
-		hb.Write(value)
-		hb.Write(crlf)
+		hb.write(name)
+		hb.write(": ")
+		hb.write(value)
+		hb.write(crlf)
 	}
 }
 
-func (hb *headerBuffer) Write(s string) {
+func (hb *headerBuffer) write(s string) {
 	if hb.err != nil {
 		_, hb.err = hb.buf.Write([]byte(s))
 	}

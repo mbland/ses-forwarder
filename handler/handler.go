@@ -160,11 +160,12 @@ func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 	}
 
 	b := &bytes.Buffer{}
-	hb := headerBuffer{
-		b, m.Header, h.Options.SenderAddress, h.Options.BucketName, key, nil,
+	hb := headerBuffer{buf: b}
+	input := &updateHeadersInput{
+		m.Header, h.Options.SenderAddress, h.Options.BucketName, key,
 	}
 
-	if err = hb.WriteUpdatedHeaders(); err != nil {
+	if err = hb.WriteUpdatedHeaders(input); err != nil {
 		return nil, err
 	} else if _, err = b.ReadFrom(m.Body); err != nil {
 		return nil, err
