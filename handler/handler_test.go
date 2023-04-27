@@ -43,10 +43,10 @@ func (ses *TestSes) SendBounce(
 }
 
 type TestS3 struct {
-	input     *s3.GetObjectInput
-	raiseErr  bool
-	outputMsg []byte
-	returnErr error
+	input                   *s3.GetObjectInput
+	returnErrReaderInOutput bool
+	outputMsg               []byte
+	returnErr               error
 }
 
 func (testS3 *TestS3) GetObject(
@@ -55,7 +55,7 @@ func (testS3 *TestS3) GetObject(
 	testS3.input = input
 	var r io.Reader
 
-	if testS3.raiseErr {
+	if testS3.returnErrReaderInOutput {
 		r = &ErrReader{errors.New(string(testS3.outputMsg))}
 	} else {
 		r = bytes.NewReader(testS3.outputMsg)
@@ -284,7 +284,7 @@ func TestGetOriginalMessage(t *testing.T) {
 
 	t.Run("ErrorsIfReadingBodyFails", func(t *testing.T) {
 		testS3, h, ctx := setup()
-		testS3.raiseErr = true
+		testS3.returnErrReaderInOutput = true
 		testS3.outputMsg = []byte("test read error")
 
 		msg, err := h.getOriginalMessage(ctx, "prefix/msgId")
