@@ -426,10 +426,6 @@ type handleEventFixture struct {
 	h           *Handler
 }
 
-func (f *handleEventFixture) addRecord(record events.SimpleEmailRecord) {
-	f.event.Records = append(f.event.Records, record)
-}
-
 func newHandleEventFixture() *handleEventFixture {
 	forwardedId := "fwd-msg-id"
 	testS3 := &TestS3{
@@ -452,31 +448,105 @@ func newHandleEventFixture() *handleEventFixture {
 		ConfigurationSet:  "bar.com",
 	}
 	h := &Handler{testS3, testSes, opts, logger}
-	event := &events.SimpleEmailEvent{}
+	event := &events.SimpleEmailEvent{
+		Records: []events.SimpleEmailRecord{
+			{
+				SES: events.SimpleEmailService{
+					Mail:    events.SimpleEmailMessage{MessageID: "deadbeef"},
+					Receipt: events.SimpleEmailReceipt{},
+				},
+			},
+		},
+	}
 	return &handleEventFixture{testS3, testSes, event, forwardedId, logs, h}
 }
 
 func TestHandleEvent(t *testing.T) {
-	setup := func() (*handleEventFixture, context.Context) {
-		return newHandleEventFixture(), context.Background()
+	setup := func() (
+		*handleEventFixture,
+		*events.SimpleEmailService,
+		string,
+		context.Context,
+	) {
+		f := newHandleEventFixture()
+		return f,
+			&f.event.Records[0].SES,
+			f.h.Options.IncomingPrefix + "/deadbeef",
+			context.Background()
+	}
+
+	errMsg := func(msgKey, message string) string {
+		return "failed to forward message " + msgKey + ": " + message
 	}
 
 	t.Run("Succeeds", func(t *testing.T) {
-		f, ctx := setup()
-		f.addRecord(events.SimpleEmailRecord{
-			SES: events.SimpleEmailService{
-				Mail: events.SimpleEmailMessage{MessageID: "deadbeef"},
-			},
-		})
+		f, _, msgKey, ctx := setup()
 
 		result, err := f.h.HandleEvent(ctx, f.event)
 
 		assert.NilError(t, err)
 		assert.Equal(t, result.Disposition, events.SimpleEmailStopRuleSet)
-		msgKey := f.h.Options.IncomingPrefix + "/deadbeef"
 		assertLogsContain(t, f.logs, "forwarding message "+msgKey)
+
 		successLogMsg := "successfully forwarded message " + msgKey +
 			" as " + f.forwardedId
 		assertLogsContain(t, f.logs, successLogMsg)
+	})
+
+	t.Run("ErrorsIfNoRecordsInEvent", func(t *testing.T) {
+		f, _, _, ctx := setup()
+		f.event.Records = []events.SimpleEmailRecord{}
+
+		result, err := f.h.HandleEvent(ctx, f.event)
+
+		assert.Assert(t, is.Nil(result))
+		assert.ErrorContains(t, err, "SES event contained no records: ")
+	})
+
+	t.Run("ErrorsIfValidationFails", func(t *testing.T) {
+		f, sesInfo, msgKey, ctx := setup()
+		sesInfo.Receipt.SpamVerdict.Status = "FAIL"
+
+		result, err := f.h.HandleEvent(ctx, f.event)
+
+		assert.NilError(t, err)
+		assert.Equal(t, result.Disposition, events.SimpleEmailStopRuleSet)
+		assertLogsContain(t, f.logs, errMsg(msgKey, "marked as spam, ignoring"))
+	})
+
+	t.Run("ErrorsIfGettingOriginalFails", func(t *testing.T) {
+		f, _, msgKey, ctx := setup()
+		f.s3.returnErr = errors.New("s3 error")
+
+		result, err := f.h.HandleEvent(ctx, f.event)
+
+		assert.NilError(t, err)
+		assert.Equal(t, result.Disposition, events.SimpleEmailStopRuleSet)
+		expected := errMsg(msgKey, "failed to get original message: s3 error")
+		assertLogsContain(t, f.logs, expected)
+	})
+
+	t.Run("ErrorsIfUpdatingMessageFails", func(t *testing.T) {
+		f, _, msgKey, ctx := setup()
+		f.s3.output.Body = io.NopCloser(strings.NewReader("invalid message"))
+
+		result, err := f.h.HandleEvent(ctx, f.event)
+
+		assert.NilError(t, err)
+		assert.Equal(t, result.Disposition, events.SimpleEmailStopRuleSet)
+		expected := errMsg(msgKey, "failed to parse message: ")
+		assertLogsContain(t, f.logs, expected)
+	})
+
+	t.Run("ErrorsIfForwardingMessageFails", func(t *testing.T) {
+		f, _, msgKey, ctx := setup()
+		f.ses.rawEmailErr = errors.New("SES error")
+
+		result, err := f.h.HandleEvent(ctx, f.event)
+
+		assert.NilError(t, err)
+		assert.Equal(t, result.Disposition, events.SimpleEmailStopRuleSet)
+		expected := errMsg(msgKey, "send failed: SES error")
+		assertLogsContain(t, f.logs, expected)
 	})
 }
