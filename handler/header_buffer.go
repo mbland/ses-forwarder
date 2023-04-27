@@ -24,7 +24,6 @@ var keepHeaders = []string{
 	"Cc",
 	"Bcc",
 	"Subject",
-	"MIME-Version",
 	"Mime-Version",
 	"Content-Type",
 }
@@ -85,6 +84,19 @@ func newFromAddress(origFrom, newFrom string) (result string, err error) {
 }
 
 func (hb *headerBuffer) writeHeader(name string, values []string) {
+	// Note that according to RFC 2045 Section 4, the header must be verbatim:
+	// "MIME-Version: 1.0".
+	// - https://www.rfc-editor.org/rfc/rfc2045#section-4
+	//
+	// Technically the headers should be case insensitive; see
+	// https://stackoverflow.com/a/6143644, which explains RFC 5322. In fact,
+	// the Go standard library net/textproto package parses all email headers
+	// using CanonicalMIMEHeaderKey:
+	// - https://pkg.go.dev/net/textproto#CanonicalMIMEHeaderKey
+	//
+	// However, it's been reported that some mail servers choke on messages
+	// that don't use "MIME-Version" exactly. For this reason, we make sure to
+	// always emit it.
 	if name == "Mime-Version" {
 		name = "MIME-Version"
 	}
