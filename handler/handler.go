@@ -48,6 +48,16 @@ func (h *Handler) HandleEvent(
 	}
 
 	sesInfo := &e.Records[0].SES
+	h.processMessage(sesInfo, ctx)
+
+	return &events.SimpleEmailDisposition{
+		Disposition: events.SimpleEmailStopRuleSet,
+	}, nil
+}
+
+func (h *Handler) processMessage(
+	sesInfo *events.SimpleEmailService, ctx context.Context,
+) {
 	key := h.Options.IncomingPrefix + "/" + sesInfo.Mail.MessageID
 	logErr := func(err error) {
 		h.Log.Printf("failed to forward message %s: %s", key, err)
@@ -66,10 +76,6 @@ func (h *Handler) HandleEvent(
 	} else {
 		h.Log.Printf("successfully forwarded message %s as %s", key, fwdId)
 	}
-
-	return &events.SimpleEmailDisposition{
-		Disposition: events.SimpleEmailStopRuleSet,
-	}, nil
 }
 
 func (h *Handler) validateMessage(
