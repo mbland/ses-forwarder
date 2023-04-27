@@ -47,8 +47,9 @@ func (h *Handler) HandleEvent(
 		return nil, fmt.Errorf("SES event contained no records: %+v", e)
 	}
 
-	sesInfo := &e.Records[0].SES
-	h.processMessage(sesInfo, ctx)
+	for i := range e.Records {
+		h.processMessage(&e.Records[i].SES, ctx)
+	}
 
 	return &events.SimpleEmailDisposition{
 		Disposition: events.SimpleEmailStopRuleSet,
