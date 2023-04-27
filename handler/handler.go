@@ -156,7 +156,7 @@ func (h *Handler) getOriginalMessage(
 func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 	m, err := mail.ReadMessage(bytes.NewReader(msg))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse message: %s", err)
 	}
 
 	b := &bytes.Buffer{}
@@ -167,9 +167,12 @@ func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 
 	if err = hb.WriteUpdatedHeaders(input); err != nil {
 		return nil, err
-	} else if _, err = b.ReadFrom(m.Body); err != nil {
-		return nil, err
 	}
+
+	// mail.ReadMessage practically guararantees the next line will succeed. The
+	// only way it could fail is if the buffer runs out of memory, and ReadFrom
+	// will panic in that case anyway.
+	b.ReadFrom(m.Body)
 	return b.Bytes(), nil
 }
 

@@ -3,16 +3,44 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log"
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ses"
+	"github.com/aws/aws-sdk-go-v2/service/ses/types"
 	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
+
+type TestSes struct {
+	rawEmailInput  *ses.SendRawEmailInput
+	rawEmailOutput *ses.SendRawEmailOutput
+	rawEmailErr    error
+	bounceInput    *ses.SendBounceInput
+	bounceOutput   *ses.SendBounceOutput
+	bounceErr      error
+}
+
+func (ses *TestSes) SendRawEmail(
+	ctx context.Context, input *ses.SendRawEmailInput, _ ...func(*ses.Options),
+) (*ses.SendRawEmailOutput, error) {
+	ses.rawEmailInput = input
+	return ses.rawEmailOutput, ses.rawEmailErr
+}
+
+func (ses *TestSes) SendBounce(
+	ctx context.Context, input *ses.SendBounceInput, _ ...func(*ses.Options),
+) (*ses.SendBounceOutput, error) {
+	ses.bounceInput = input
+	return ses.bounceOutput, ses.bounceErr
+}
 
 type TestS3 struct {
 	input     *s3.GetObjectInput
@@ -27,12 +55,193 @@ func (s3 *TestS3) GetObject(
 	return s3.output, s3.returnErr
 }
 
+type TestLogs = strings.Builder
+
+func testLogger() (*TestLogs, *log.Logger) {
+	builder := &TestLogs{}
+	logger := log.New(builder, "test logger: ", 0)
+	return builder, logger
+}
+
+func assertLogsContain(t *testing.T, tl *TestLogs, message string) {
+	t.Helper()
+	assert.Assert(t, is.Contains(tl.String(), message))
+}
+
 type ErrReader struct {
 	err error
 }
 
 func (r *ErrReader) Read([]byte) (int, error) {
 	return 0, r.err
+}
+
+func TestBounceIfDmarcFails(t *testing.T) {
+	recipient := "mbland@acm.org"
+	bouncedId := "didBounce"
+
+	setup := func() (
+		*TestSes, *Handler, *events.SimpleEmailService, context.Context,
+	) {
+		testSes := &TestSes{
+			bounceOutput: &ses.SendBounceOutput{MessageId: &bouncedId},
+		}
+		opts := &Options{EmailDomainName: "foo.com"}
+		ctx := context.Background()
+		sesInfo := &events.SimpleEmailService{
+			Mail: events.SimpleEmailMessage{MessageID: "deadbeef"},
+			Receipt: events.SimpleEmailReceipt{
+				Recipients: []string{recipient},
+			},
+		}
+		return testSes, &Handler{Ses: testSes, Options: opts}, sesInfo, ctx
+	}
+
+	t.Run("DoesNothingIfVerdictIsNotFail", func(t *testing.T) {
+		testSes, h, sesInfo, ctx := setup()
+		sesInfo.Receipt.DMARCVerdict.Status = "pass"
+		sesInfo.Receipt.DMARCPolicy = "reject"
+
+		bounceId, err := h.bounceIfDmarcFails(ctx, sesInfo)
+
+		assert.NilError(t, err)
+		assert.Equal(t, bounceId, "")
+		assert.Assert(t, is.Nil(testSes.bounceInput))
+	})
+
+	t.Run("DoesNothingIfPolicyIsNotReject", func(t *testing.T) {
+		testSes, h, sesInfo, ctx := setup()
+		sesInfo.Receipt.DMARCVerdict.Status = "fail"
+		sesInfo.Receipt.DMARCPolicy = "none"
+
+		bounceId, err := h.bounceIfDmarcFails(ctx, sesInfo)
+
+		assert.NilError(t, err)
+		assert.Equal(t, bounceId, "")
+		assert.Assert(t, is.Nil(testSes.bounceInput))
+	})
+
+	t.Run("BouncesIfVerdictFailsAndPolicyRejects", func(t *testing.T) {
+		testSes, h, sesInfo, ctx := setup()
+		sesInfo.Receipt.DMARCVerdict.Status = "fail"
+		sesInfo.Receipt.DMARCPolicy = "reject"
+
+		bounceId, err := h.bounceIfDmarcFails(ctx, sesInfo)
+
+		assert.NilError(t, err)
+		assert.Equal(t, bounceId, bouncedId)
+		assert.Assert(t, testSes.bounceInput != nil)
+
+		bouncedRecipients := testSes.bounceInput.BouncedRecipientInfoList
+		assert.Equal(t, len(bouncedRecipients), 1)
+		assert.Equal(t, *bouncedRecipients[0].Recipient, recipient)
+		assert.Equal(
+			t, bouncedRecipients[0].BounceType, types.BounceTypeContentRejected,
+		)
+	})
+
+	t.Run("ErrorsIfSendBounceFails", func(t *testing.T) {
+		testSes, h, sesInfo, ctx := setup()
+		sesInfo.Receipt.DMARCVerdict.Status = "fail"
+		sesInfo.Receipt.DMARCPolicy = "reject"
+		testSes.bounceErr = errors.New("test error")
+
+		bounceId, err := h.bounceIfDmarcFails(ctx, sesInfo)
+
+		assert.Equal(t, bounceId, "")
+		assert.Assert(t, testSes.bounceInput != nil)
+		assert.ErrorContains(t, err, "DMARC bounce failed: test error")
+	})
+}
+
+func TestIsSpam(t *testing.T) {
+	failedVerdict := func(checkType string) *events.SimpleEmailService {
+		sesInfo := &events.SimpleEmailService{}
+		var verdict *events.SimpleEmailVerdict
+
+		switch checkType {
+		case "SPF":
+			verdict = &sesInfo.Receipt.SPFVerdict
+		case "DKIM":
+			verdict = &sesInfo.Receipt.DKIMVerdict
+		case "Spam":
+			verdict = &sesInfo.Receipt.SpamVerdict
+		case "Virus":
+			verdict = &sesInfo.Receipt.VirusVerdict
+		}
+
+		if verdict != nil {
+			verdict.Status = "fail"
+		}
+		return sesInfo
+	}
+	t.Run("ReturnsFalseIfNoVerdictsFail", func(t *testing.T) {
+		assert.Assert(t, isSpam(failedVerdict("none")) == false)
+	})
+
+	t.Run("ReturnsTrueIfAnyVerdictFails", func(t *testing.T) {
+		assert.Check(t, isSpam(failedVerdict("SPF")) == true)
+		assert.Check(t, isSpam(failedVerdict("DKIM")) == true)
+		assert.Check(t, isSpam(failedVerdict("Spam")) == true)
+		assert.Assert(t, isSpam(failedVerdict("Virus")) == true)
+	})
+}
+
+func TestValidateMessage(t *testing.T) {
+	bouncedId := "didBounce"
+
+	setup := func() (
+		*TestSes, *Handler, *events.SimpleEmailService, context.Context,
+	) {
+		testSes := &TestSes{
+			bounceOutput: &ses.SendBounceOutput{MessageId: &bouncedId},
+		}
+		opts := &Options{EmailDomainName: "foo.com"}
+		ctx := context.Background()
+		sesInfo := &events.SimpleEmailService{
+			Mail: events.SimpleEmailMessage{MessageID: "deadbeef"},
+		}
+		return testSes, &Handler{Ses: testSes, Options: opts}, sesInfo, ctx
+	}
+
+	t.Run("Succeeds", func(t *testing.T) {
+		_, h, sesInfo, ctx := setup()
+
+		err := h.validateMessage(ctx, sesInfo)
+
+		assert.NilError(t, err)
+	})
+
+	t.Run("ErrorsIfDmarcBounceFails", func(t *testing.T) {
+		testSes, h, sesInfo, ctx := setup()
+		sesInfo.Receipt.DMARCVerdict.Status = "fail"
+		sesInfo.Receipt.DMARCPolicy = "reject"
+		testSes.bounceErr = errors.New("test error")
+
+		err := h.validateMessage(ctx, sesInfo)
+
+		assert.ErrorContains(t, err, "DMARC bounce failed: test error")
+	})
+
+	t.Run("ErrorsIfMessageBounced", func(t *testing.T) {
+		_, h, sesInfo, ctx := setup()
+		sesInfo.Receipt.DMARCVerdict.Status = "fail"
+		sesInfo.Receipt.DMARCPolicy = "reject"
+
+		err := h.validateMessage(ctx, sesInfo)
+
+		expected := "DMARC bounced with bounce ID: " + bouncedId
+		assert.ErrorContains(t, err, expected)
+	})
+
+	t.Run("ErrorsIfIsSpam", func(t *testing.T) {
+		_, h, sesInfo, ctx := setup()
+		sesInfo.Receipt.SPFVerdict.Status = "fail"
+
+		err := h.validateMessage(ctx, sesInfo)
+
+		assert.ErrorContains(t, err, "marked as spam, ignoring")
+	})
 }
 
 func TestGetOriginalMessage(t *testing.T) {
@@ -60,7 +269,7 @@ func TestGetOriginalMessage(t *testing.T) {
 
 		msg, err := h.getOriginalMessage(ctx, "prefix/msgId")
 
-		assert.Equal(t, len(msg), 0)
+		assert.Equal(t, string(msg), "")
 		expected := "failed to get original message: S3 test error"
 		assert.ErrorContains(t, err, expected)
 	})
@@ -72,33 +281,10 @@ func TestGetOriginalMessage(t *testing.T) {
 
 		msg, err := h.getOriginalMessage(ctx, "prefix/msgId")
 
-		assert.Equal(t, len(msg), 0)
+		assert.Equal(t, string(msg), "")
 		expected := "failed to get original message: test read error"
 		assert.ErrorContains(t, err, expected)
 	})
-}
-
-type TestSes struct {
-	rawEmailInput  *ses.SendRawEmailInput
-	rawEmailOutput *ses.SendRawEmailOutput
-	rawEmailErr    error
-	bounceInput    *ses.SendBounceInput
-	bounceOutput   *ses.SendBounceOutput
-	bounceErr      error
-}
-
-func (ses *TestSes) SendRawEmail(
-	ctx context.Context, input *ses.SendRawEmailInput, _ ...func(*ses.Options),
-) (*ses.SendRawEmailOutput, error) {
-	ses.rawEmailInput = input
-	return ses.rawEmailOutput, ses.rawEmailErr
-}
-
-func (ses *TestSes) SendBounce(
-	ctx context.Context, input *ses.SendBounceInput, _ ...func(*ses.Options),
-) (*ses.SendBounceOutput, error) {
-	ses.bounceInput = input
-	return ses.bounceOutput, ses.bounceErr
 }
 
 func TestForwardMessage(t *testing.T) {
@@ -141,6 +327,39 @@ func TestForwardMessage(t *testing.T) {
 	})
 }
 
+var beforeHeaders string = strings.Join([]string{
+	`Return-Path: <bounce@foo.com>`,
+	`Received: ...`,
+	` by ...`,
+	`X-SES-Spam-Verdict: PASS`,
+	`MIME-Version: 1.0`,
+	`From: Mike Bland <mbland@acm.org>`,
+	`Cc: foo@bar.com`,
+	`Bcc: bar@baz.com`,
+	`Date: Fri, 18 Sep 1970 12:45:00 +0000`,
+	`Message-ID: <...>`,
+	`Subject: There's a reason why we unit test`,
+	`To: foo@xyzzy.com`,
+	`Content-Type: multipart/alternative; boundary="random-string"`,
+}, "\r\n")
+
+var msgBody string = strings.Join([]string{
+	`--random-string`,
+	`Content-Type: text/plain; charset="UTF-8"`,
+	``,
+	`Sometimes the getting smallest detail wrong breaks everything.`,
+	``,
+	`--random-string`,
+	`Content-Type: text/html; charset="UTF-8"`,
+	``,
+	`<div dir="ltr">Sometimes the getting smallest detail wrong`,
+	`breaks everything.</div>`,
+	``,
+	`--random-string--`,
+}, "\r\n")
+
+var testMsg []byte = []byte(beforeHeaders + "\r\n\r\n" + msgBody)
+
 func TestUpdateMessage(t *testing.T) {
 	setup := func() (*Handler, *Options) {
 		opts := &Options{
@@ -152,39 +371,8 @@ func TestUpdateMessage(t *testing.T) {
 		return &Handler{Options: opts}, opts
 	}
 
-	beforeHeaders := strings.Join([]string{
-		`Return-Path: <bounce@foo.com>`,
-		`Received: ...`,
-		` by ...`,
-		`X-SES-Spam-Verdict: PASS`,
-		`MIME-Version: 1.0`,
-		`From: Mike Bland <mbland@acm.org>`,
-		`Cc: foo@bar.com`,
-		`Bcc: bar@baz.com`,
-		`Date: Fri, 18 Sep 1970 12:45:00 +0000`,
-		`Message-ID: <...>`,
-		`Subject: There's a reason why we unit test`,
-		`To: foo@xyzzy.com`,
-		`Content-Type: multipart/alternative; boundary="random-string"`,
-	}, "\r\n")
-	msgBody := strings.Join([]string{
-		`--random-string`,
-		`Content-Type: text/plain; charset="UTF-8"`,
-		``,
-		`Sometimes the getting smallest detail wrong breaks everything.`,
-		``,
-		`--random-string`,
-		`Content-Type: text/html; charset="UTF-8"`,
-		``,
-		`<div dir="ltr">Sometimes the getting smallest detail wrong`,
-		`breaks everything.</div>`,
-		``,
-		`--random-string--`,
-	}, "\r\n")
-
 	t.Run("Succeeds", func(t *testing.T) {
 		h, opts := setup()
-		testMsg := []byte(beforeHeaders + "\r\n\r\n" + msgBody)
 		msgKey := "prefix/msgId"
 
 		result, err := h.updateMessage(testMsg, msgKey)
@@ -205,5 +393,90 @@ func TestUpdateMessage(t *testing.T) {
 			msgBody,
 		}, "\r\n")
 		assert.Equal(t, expected, string(result))
+	})
+
+	t.Run("ErrorsIfReadingMessageFails", func(t *testing.T) {
+		h, _ := setup()
+
+		result, err := h.updateMessage([]byte("not an email"), "prefix/msgId")
+
+		assert.Equal(t, string(result), "")
+		assert.ErrorContains(t, err, "failed to parse message: ")
+	})
+
+	t.Run("ErrorsIfUpdatingHeadersFails", func(t *testing.T) {
+		h, _ := setup()
+		badMsg := []byte("From: D'oh!\r\n\r\nThis is only a test.\r\n")
+
+		result, err := h.updateMessage(badMsg, "prefix/msgId")
+
+		assert.Equal(t, string(result), "")
+		expected := "error updating email headers: " +
+			"couldn't parse From address D'oh!:"
+		assert.ErrorContains(t, err, expected)
+	})
+}
+
+type handleEventFixture struct {
+	s3          *TestS3
+	ses         *TestSes
+	event       *events.SimpleEmailEvent
+	forwardedId string
+	logs        *TestLogs
+	h           *Handler
+}
+
+func (f *handleEventFixture) addRecord(record events.SimpleEmailRecord) {
+	f.event.Records = append(f.event.Records, record)
+}
+
+func newHandleEventFixture() *handleEventFixture {
+	forwardedId := "fwd-msg-id"
+	testS3 := &TestS3{
+		output: &s3.GetObjectOutput{
+			Body: io.NopCloser(bytes.NewReader(testMsg)),
+		},
+	}
+	testSes := &TestSes{
+		rawEmailOutput: &ses.SendRawEmailOutput{
+			MessageId: &forwardedId,
+		},
+	}
+	logs, logger := testLogger()
+	opts := &Options{
+		BucketName:        "mail.bar.com",
+		IncomingPrefix:    "incoming",
+		EmailDomainName:   "bar.com",
+		SenderAddress:     "mbland@acm.org",
+		ForwardingAddress: "foo@bar.com",
+		ConfigurationSet:  "bar.com",
+	}
+	h := &Handler{testS3, testSes, opts, logger}
+	event := &events.SimpleEmailEvent{}
+	return &handleEventFixture{testS3, testSes, event, forwardedId, logs, h}
+}
+
+func TestHandleEvent(t *testing.T) {
+	setup := func() (*handleEventFixture, context.Context) {
+		return newHandleEventFixture(), context.Background()
+	}
+
+	t.Run("Succeeds", func(t *testing.T) {
+		f, ctx := setup()
+		f.addRecord(events.SimpleEmailRecord{
+			SES: events.SimpleEmailService{
+				Mail: events.SimpleEmailMessage{MessageID: "deadbeef"},
+			},
+		})
+
+		result, err := f.h.HandleEvent(ctx, f.event)
+
+		assert.NilError(t, err)
+		assert.Equal(t, result.Disposition, events.SimpleEmailStopRuleSet)
+		msgKey := f.h.Options.IncomingPrefix + "/deadbeef"
+		assertLogsContain(t, f.logs, "forwarding message "+msgKey)
+		successLogMsg := "successfully forwarded message " + msgKey +
+			" as " + f.forwardedId
+		assertLogsContain(t, f.logs, successLogMsg)
 	})
 }

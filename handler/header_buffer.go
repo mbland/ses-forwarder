@@ -42,7 +42,7 @@ func (hb *headerBuffer) WriteUpdatedHeaders(input *updateHeadersInput) error {
 	hb.write(origLinkHeaderPrefix + input.msgPath + "\r\n\r\n")
 
 	if hb.err != nil {
-		return fmt.Errorf("error while updating email headers: %s", hb.err)
+		return fmt.Errorf("error updating email headers: %s", hb.err)
 	}
 	return nil
 }
