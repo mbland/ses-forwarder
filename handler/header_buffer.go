@@ -19,7 +19,6 @@ type updateHeadersInput struct {
 }
 
 var keepHeaders = []string{
-	"Reply-To",
 	"To",
 	"Cc",
 	"Bcc",
@@ -31,7 +30,7 @@ var keepHeaders = []string{
 const origLinkHeaderPrefix = "X-SES-Forwarder-Original: s3://"
 
 func (hb *headerBuffer) WriteUpdatedHeaders(input *updateHeadersInput) error {
-	hb.writeFromHeader(input.headers, input.senderAddress)
+	hb.writeFromAndReplyTo(input.headers, input.senderAddress)
 
 	for _, header := range keepHeaders {
 		if values, ok := input.headers[header]; ok {
@@ -46,8 +45,11 @@ func (hb *headerBuffer) WriteUpdatedHeaders(input *updateHeadersInput) error {
 	return nil
 }
 
-func (hb *headerBuffer) writeFromHeader(headers mail.Header, sender string) {
+func (hb *headerBuffer) writeFromAndReplyTo(
+	headers mail.Header, sender string,
+) {
 	origFrom := headers.Get("From")
+	replyTo := headers.Get("Reply-To")
 	var newFrom string
 
 	newFrom, hb.err = newFromAddress(origFrom, sender)
@@ -56,9 +58,10 @@ func (hb *headerBuffer) writeFromHeader(headers mail.Header, sender string) {
 	}
 
 	hb.writeHeader("From", []string{newFrom})
-	if headers.Get("Reply-To") == "" {
-		hb.writeHeader("Reply-To", []string{origFrom})
+	if replyTo == "" {
+		replyTo = origFrom
 	}
+	hb.writeHeader("Reply-To", []string{replyTo})
 }
 
 func newFromAddress(origFrom, newFrom string) (result string, err error) {
