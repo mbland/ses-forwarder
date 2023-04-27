@@ -48,7 +48,7 @@ func (h *Handler) HandleEvent(
 	}
 
 	for i := range e.Records {
-		h.processMessage(&e.Records[i].SES, ctx)
+		h.processMessage(ctx, &e.Records[i].SES)
 	}
 
 	return &events.SimpleEmailDisposition{
@@ -57,7 +57,7 @@ func (h *Handler) HandleEvent(
 }
 
 func (h *Handler) processMessage(
-	sesInfo *events.SimpleEmailService, ctx context.Context,
+	ctx context.Context, sesInfo *events.SimpleEmailService,
 ) {
 	key := h.Options.IncomingPrefix + "/" + sesInfo.Mail.MessageID
 	logErr := func(err error) {
