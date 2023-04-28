@@ -63,10 +63,10 @@ Resources:
               Service: ses.amazonaws.com
             Action:
               - "s3:PutObject"
-            Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/*"
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/${IncomingPrefix}/*"
             Condition:
-              StringEquals:
-                "aws:referer": !Ref AWS::AccountId
+              ArnEquals:
+                "AWS:SourceArn": !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/${ReceiptRuleSetName}:receipt-rule/${AWS::StackName}"
 
   ReceiptRuleSetPermission:
     Type: AWS::Lambda::Permission
@@ -74,7 +74,7 @@ Resources:
       Action: "lambda:InvokeFunction"
       FunctionName: !GetAtt Function.Arn
       Principal: "ses.amazonaws.com"
-      SourceArn: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/${ReceiptRuleSetName}:receipt-rule/*"
+      SourceArn: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/${ReceiptRuleSetName}:receipt-rule/${AWS::StackName}"
 
   ReceiptRule:
     # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ses-receiptrule.html
