@@ -28,8 +28,12 @@ Resources:
       Runtime: go1.x
       Policies:
         - AWSLambdaBasicExecutionRole
-        - S3ReadPolicy:
-            BucketName: !Ref BucketName
+        - Statement:
+            Sid: S3GetObjectPolicy
+            Effect: Allow
+            Action:
+              - "s3:GetObject"
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/*"
         - Statement:
             Sid: SESSendEmailPolicy
             Effect: Allow
@@ -63,7 +67,7 @@ Resources:
               Service: ses.amazonaws.com
             Action:
               - "s3:PutObject"
-            Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/${IncomingPrefix}/*"
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/*"
             Condition:
               ArnEquals:
                 "AWS:SourceArn": !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/${ReceiptRuleSetName}:receipt-rule/${AWS::StackName}"
