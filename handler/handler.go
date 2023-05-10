@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/aws/aws-sdk-go-v2/service/ses/types"
@@ -103,27 +104,27 @@ func (h *Handler) bounceIfDmarcFails(
 		return
 	}
 
-	sender := "mailer-daemon@" + h.Options.EmailDomainName
 	recipients := info.Receipt.Recipients
 	recipientInfo := make([]types.BouncedRecipientInfo, len(recipients))
-	reportingMta := "dns; " + h.Options.EmailDomainName
-	arrivalDate := time.Now().Truncate(time.Second)
-	explanation := "Unauthenticated email is not accepted due to " +
-		"the sending domain's DMARC policy."
 
 	for i, recipient := range recipients {
-		recipientInfo[i].Recipient = &recipient
+		recipientInfo[i].Recipient = aws.String(recipient)
 		recipientInfo[i].BounceType = types.BounceTypeContentRejected
 	}
 
 	input := &ses.SendBounceInput{
-		BounceSender:      &sender,
-		OriginalMessageId: &info.Mail.MessageID,
+		BounceSender: aws.String(
+			"mailer-daemon@" + h.Options.EmailDomainName,
+		),
+		OriginalMessageId: aws.String(info.Mail.MessageID),
 		MessageDsn: &types.MessageDsn{
-			ReportingMta: &reportingMta,
-			ArrivalDate:  &arrivalDate,
+			ReportingMta: aws.String("dns; " + h.Options.EmailDomainName),
+			ArrivalDate:  aws.Time(time.Now().Truncate(time.Second)),
 		},
-		Explanation:              &explanation,
+		Explanation: aws.String(
+			"Unauthenticated email is not accepted due to " +
+				"the sending domain's DMARC policy.",
+		),
 		BouncedRecipientInfoList: recipientInfo,
 	}
 	var output *ses.SendBounceOutput
@@ -131,7 +132,7 @@ func (h *Handler) bounceIfDmarcFails(
 	if output, err = h.Ses.SendBounce(ctx, input); err != nil {
 		err = fmt.Errorf("DMARC bounce failed: %s", err)
 	} else {
-		bounceMessageId = *output.MessageId
+		bounceMessageId = aws.ToString(output.MessageId)
 	}
 	return
 }
@@ -148,7 +149,9 @@ func isSpam(info *events.SimpleEmailService) bool {
 func (h *Handler) getOriginalMessage(
 	ctx context.Context, key string,
 ) (msg []byte, err error) {
-	input := &s3.GetObjectInput{Bucket: &h.Options.BucketName, Key: &key}
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(h.Options.BucketName), Key: aws.String(key),
+	}
 	var output *s3.GetObjectOutput
 
 	if output, err = h.S3.GetObject(ctx, input); err == nil {
@@ -188,7 +191,7 @@ func (h *Handler) forwardMessage(
 ) (forwardedMessageId string, err error) {
 	sesMsg := &ses.SendRawEmailInput{
 		Destinations:         []string{h.Options.ForwardingAddress},
-		ConfigurationSetName: &h.Options.ConfigurationSet,
+		ConfigurationSetName: aws.String(h.Options.ConfigurationSet),
 		RawMessage:           &types.RawMessage{Data: msg},
 	}
 	var output *ses.SendRawEmailOutput
@@ -196,7 +199,7 @@ func (h *Handler) forwardMessage(
 	if output, err = h.Ses.SendRawEmail(ctx, sesMsg); err != nil {
 		err = fmt.Errorf("send failed: %s", err)
 	} else {
-		forwardedMessageId = *output.MessageId
+		forwardedMessageId = aws.ToString(output.MessageId)
 	}
 	return
 }
