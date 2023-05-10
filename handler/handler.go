@@ -155,6 +155,7 @@ func (h *Handler) getOriginalMessage(
 	var output *s3.GetObjectOutput
 
 	if output, err = h.S3.GetObject(ctx, input); err == nil {
+		defer output.Body.Close()
 		msg, err = io.ReadAll(output.Body)
 	}
 	if err != nil {

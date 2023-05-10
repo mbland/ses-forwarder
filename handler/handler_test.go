@@ -46,21 +46,25 @@ type TestS3 struct {
 	input                   *s3.GetObjectInput
 	returnErrReaderInOutput bool
 	outputMsg               []byte
+	output                  *TestReadCloser
 	returnErr               error
+}
+
+func NewTestS3() *TestS3 {
+	return &TestS3{output: &TestReadCloser{}}
 }
 
 func (testS3 *TestS3) GetObject(
 	ctx context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options),
 ) (*s3.GetObjectOutput, error) {
 	testS3.input = input
-	var r io.Reader
 
 	if testS3.returnErrReaderInOutput {
-		r = &ErrReader{errors.New(string(testS3.outputMsg))}
+		testS3.output.Reader = &ErrReader{errors.New(string(testS3.outputMsg))}
 	} else {
-		r = bytes.NewReader(testS3.outputMsg)
+		testS3.output.Reader = bytes.NewReader(testS3.outputMsg)
 	}
-	return &s3.GetObjectOutput{Body: io.NopCloser(r)}, testS3.returnErr
+	return &s3.GetObjectOutput{Body: testS3.output}, testS3.returnErr
 }
 
 type ErrReader struct {
@@ -69,6 +73,16 @@ type ErrReader struct {
 
 func (r *ErrReader) Read([]byte) (int, error) {
 	return 0, r.err
+}
+
+type TestReadCloser struct {
+	io.Reader
+	timesClosed int
+}
+
+func (trc *TestReadCloser) Close() error {
+	trc.timesClosed++
+	return nil
 }
 
 type TestLogs = strings.Builder
@@ -254,7 +268,7 @@ func TestValidateMessage(t *testing.T) {
 
 func TestGetOriginalMessage(t *testing.T) {
 	setup := func() (*TestS3, *Handler, context.Context) {
-		testS3 := &TestS3{}
+		testS3 := NewTestS3()
 		opts := &Options{BucketName: "mail.foo.com"}
 		ctx := context.Background()
 		return testS3, &Handler{S3: testS3, Options: opts}, ctx
@@ -269,6 +283,7 @@ func TestGetOriginalMessage(t *testing.T) {
 		assert.Equal(t, "Hello, world!", string(msg))
 		assert.Equal(t, h.Options.BucketName, *testS3.input.Bucket)
 		assert.Equal(t, "prefix/msgId", *testS3.input.Key)
+		assert.Equal(t, testS3.output.timesClosed, 1)
 	})
 
 	t.Run("ErrorsIfGetObjectFails", func(t *testing.T) {
@@ -280,6 +295,7 @@ func TestGetOriginalMessage(t *testing.T) {
 		assert.Equal(t, string(msg), "")
 		expected := "failed to get original message: S3 test error"
 		assert.ErrorContains(t, err, expected)
+		assert.Equal(t, testS3.output.timesClosed, 0)
 	})
 
 	t.Run("ErrorsIfReadingBodyFails", func(t *testing.T) {
@@ -292,6 +308,7 @@ func TestGetOriginalMessage(t *testing.T) {
 		assert.Equal(t, string(msg), "")
 		expected := "failed to get original message: test read error"
 		assert.ErrorContains(t, err, expected)
+		assert.Equal(t, testS3.output.timesClosed, 1)
 	})
 }
 
@@ -436,7 +453,8 @@ type handleEventFixture struct {
 
 func newHandleEventFixture() *handleEventFixture {
 	forwardedId := "fwd-msg-id"
-	testS3 := &TestS3{outputMsg: testMsg}
+	testS3 := NewTestS3()
+	testS3.outputMsg = testMsg
 	testSes := &TestSes{
 		rawEmailOutput: &ses.SendRawEmailOutput{
 			MessageId: &forwardedId,
@@ -579,6 +597,7 @@ func TestHandleEvent(t *testing.T) {
 		assert.Equal(t, result.Disposition, events.SimpleEmailStopRuleSet)
 		assertSuccessLogs(t, f, msgKey)
 		assertSuccessLogs(t, f, f.h.Options.IncomingPrefix+"/beefdead")
+		assert.Equal(t, f.s3.output.timesClosed, 2)
 	})
 
 	t.Run("ErrorsIfNoRecordsInEvent", func(t *testing.T) {
