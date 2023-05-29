@@ -4,9 +4,6 @@ Amazon Simple Email Service Receipt Rule email forwarding system.
 
 Source: <https://github.com/mbland/ses-forwarder>
 
-_**NOTE:** This project is just beginning. When it's operational, I'll remove
-this notice._
-
 [![License](https://img.shields.io/github/license/mbland/ses-forwarder.svg)](https://github.com/mbland/ses-forwarder/blob/main/LICENSE.txt)
 [![CI status](https://github.com/mbland/ses-forwarder/actions/workflows/run-tests.yaml/badge.svg)](https://github.com/mbland/ses-forwarder/actions/workflows/run-tests.yaml?branch=main)
 [![Coverage Status](https://coveralls.io/repos/github/mbland/ses-forwarder/badge.svg?branch=main)](https://coveralls.io/github/mbland/ses-forwarder?branch=main)
