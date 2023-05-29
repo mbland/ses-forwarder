@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ses"
+	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/mbland/ses-forwarder/handler"
 )
 
@@ -21,6 +22,7 @@ func buildHandler() (*handler.Handler, error) {
 		return &handler.Handler{
 			S3:      s3.NewFromConfig(cfg),
 			Ses:     ses.NewFromConfig(cfg),
+			SesV2:   sesv2.NewFromConfig(cfg),
 			Options: opts,
 			Log:     log.Default(),
 		}, nil

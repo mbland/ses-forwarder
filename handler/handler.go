@@ -15,7 +15,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ses"
-	"github.com/aws/aws-sdk-go-v2/service/ses/types"
+	sestypes "github.com/aws/aws-sdk-go-v2/service/ses/types"
+	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+	sesv2types "github.com/aws/aws-sdk-go-v2/service/sesv2/types"
 )
 
 type S3Api interface {
@@ -25,18 +27,21 @@ type S3Api interface {
 }
 
 type SesApi interface {
-	SendRawEmail(
-		context.Context, *ses.SendRawEmailInput, ...func(*ses.Options),
-	) (*ses.SendRawEmailOutput, error)
-
 	SendBounce(
 		context.Context, *ses.SendBounceInput, ...func(*ses.Options),
 	) (*ses.SendBounceOutput, error)
 }
 
+type SesV2Api interface {
+	SendEmail(
+		context.Context, *sesv2.SendEmailInput, ...func(*sesv2.Options),
+	) (*sesv2.SendEmailOutput, error)
+}
+
 type Handler struct {
 	S3      S3Api
 	Ses     SesApi
+	SesV2   SesV2Api
 	Options *Options
 	Log     *log.Logger
 }
@@ -105,11 +110,11 @@ func (h *Handler) bounceIfDmarcFails(
 	}
 
 	recipients := info.Receipt.Recipients
-	recipientInfo := make([]types.BouncedRecipientInfo, len(recipients))
+	recipientInfo := make([]sestypes.BouncedRecipientInfo, len(recipients))
 
 	for i, recipient := range recipients {
 		recipientInfo[i].Recipient = aws.String(recipient)
-		recipientInfo[i].BounceType = types.BounceTypeContentRejected
+		recipientInfo[i].BounceType = sestypes.BounceTypeContentRejected
 	}
 
 	input := &ses.SendBounceInput{
@@ -117,7 +122,7 @@ func (h *Handler) bounceIfDmarcFails(
 			"mailer-daemon@" + h.Options.EmailDomainName,
 		),
 		OriginalMessageId: aws.String(info.Mail.MessageID),
-		MessageDsn: &types.MessageDsn{
+		MessageDsn: &sestypes.MessageDsn{
 			ReportingMta: aws.String("dns; " + h.Options.EmailDomainName),
 			ArrivalDate:  aws.Time(time.Now().Truncate(time.Second)),
 		},
@@ -190,14 +195,18 @@ func (h *Handler) updateMessage(msg []byte, key string) ([]byte, error) {
 func (h *Handler) forwardMessage(
 	ctx context.Context, msg []byte,
 ) (forwardedMessageId string, err error) {
-	sesMsg := &ses.SendRawEmailInput{
-		Destinations:         []string{h.Options.ForwardingAddress},
+	sesMsg := &sesv2.SendEmailInput{
 		ConfigurationSetName: aws.String(h.Options.ConfigurationSet),
-		RawMessage:           &types.RawMessage{Data: msg},
+		Content: &sesv2types.EmailContent{
+			Raw: &sesv2types.RawMessage{Data: msg},
+		},
+		Destination: &sesv2types.Destination{
+			ToAddresses: []string{h.Options.ForwardingAddress},
+		},
 	}
-	var output *ses.SendRawEmailOutput
+	var output *sesv2.SendEmailOutput
 
-	if output, err = h.Ses.SendRawEmail(ctx, sesMsg); err != nil {
+	if output, err = h.SesV2.SendEmail(ctx, sesMsg); err != nil {
 		err = fmt.Errorf("send failed: %s", err)
 	} else {
 		forwardedMessageId = aws.ToString(output.MessageId)

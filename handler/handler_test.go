@@ -15,31 +15,37 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/aws/aws-sdk-go-v2/service/ses/types"
+	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"gotest.tools/assert"
 	is "gotest.tools/assert/cmp"
 )
 
 type TestSes struct {
-	rawEmailInput  *ses.SendRawEmailInput
-	rawEmailOutput *ses.SendRawEmailOutput
-	rawEmailErr    error
-	bounceInput    *ses.SendBounceInput
-	bounceOutput   *ses.SendBounceOutput
-	bounceErr      error
-}
-
-func (ses *TestSes) SendRawEmail(
-	ctx context.Context, input *ses.SendRawEmailInput, _ ...func(*ses.Options),
-) (*ses.SendRawEmailOutput, error) {
-	ses.rawEmailInput = input
-	return ses.rawEmailOutput, ses.rawEmailErr
+	bounceInput  *ses.SendBounceInput
+	bounceOutput *ses.SendBounceOutput
+	bounceErr    error
 }
 
 func (ses *TestSes) SendBounce(
-	ctx context.Context, input *ses.SendBounceInput, _ ...func(*ses.Options),
+	_ context.Context, input *ses.SendBounceInput, _ ...func(*ses.Options),
 ) (*ses.SendBounceOutput, error) {
 	ses.bounceInput = input
 	return ses.bounceOutput, ses.bounceErr
+}
+
+type TestSesV2 struct {
+	sendEmailInput  *sesv2.SendEmailInput
+	sendEmailOutput *sesv2.SendEmailOutput
+	sendEmailErr    error
+}
+
+func (ses *TestSesV2) SendEmail(
+	_ context.Context,
+	input *sesv2.SendEmailInput,
+	_ ...func(*sesv2.Options),
+) (*sesv2.SendEmailOutput, error) {
+	ses.sendEmailInput = input
+	return ses.sendEmailOutput, ses.sendEmailErr
 }
 
 type TestS3 struct {
@@ -315,19 +321,19 @@ func TestGetOriginalMessage(t *testing.T) {
 func TestForwardMessage(t *testing.T) {
 	var forwardedMsgId string = "forwardedMsgId"
 
-	setup := func() (*TestSes, *Handler, context.Context) {
-		testSes := &TestSes{rawEmailOutput: &ses.SendRawEmailOutput{}}
+	setup := func() (*TestSesV2, *Handler, context.Context) {
+		testSesV2 := &TestSesV2{sendEmailOutput: &sesv2.SendEmailOutput{}}
 		opts := &Options{
 			ForwardingAddress: "quux@xyzzy.com",
 			ConfigurationSet:  "ses-forwarder",
 		}
 		ctx := context.Background()
-		return testSes, &Handler{Ses: testSes, Options: opts}, ctx
+		return testSesV2, &Handler{SesV2: testSesV2, Options: opts}, ctx
 	}
 
 	t.Run("Succeeds", func(t *testing.T) {
 		testSes, h, ctx := setup()
-		testSes.rawEmailOutput.MessageId = &forwardedMsgId
+		testSes.sendEmailOutput.MessageId = &forwardedMsgId
 		fwdAddr := h.Options.ForwardingAddress
 		configSet := h.Options.ConfigurationSet
 		msg := []byte("Hello, world!")
@@ -336,14 +342,18 @@ func TestForwardMessage(t *testing.T) {
 
 		assert.NilError(t, err)
 		assert.Equal(t, forwardedMsgId, fwdId)
-		assert.DeepEqual(t, []string{fwdAddr}, testSes.rawEmailInput.Destinations)
-		assert.Equal(t, configSet, *testSes.rawEmailInput.ConfigurationSetName)
-		assert.DeepEqual(t, msg, testSes.rawEmailInput.RawMessage.Data)
+		assert.DeepEqual(
+			t,
+			[]string{fwdAddr},
+			testSes.sendEmailInput.Destination.ToAddresses,
+		)
+		assert.Equal(t, configSet, *testSes.sendEmailInput.ConfigurationSetName)
+		assert.DeepEqual(t, msg, testSes.sendEmailInput.Content.Raw.Data)
 	})
 
 	t.Run("ErrorsIfSendingFails", func(t *testing.T) {
 		testSes, h, ctx := setup()
-		testSes.rawEmailErr = errors.New("SES test error")
+		testSes.sendEmailErr = errors.New("SES test error")
 
 		fwdId, err := h.forwardMessage(ctx, []byte("Hello, world!"))
 
@@ -444,7 +454,7 @@ func TestUpdateMessage(t *testing.T) {
 
 type handleEventFixture struct {
 	s3          *TestS3
-	ses         *TestSes
+	sesv2       *TestSesV2
 	event       *events.SimpleEmailEvent
 	forwardedId string
 	logs        *TestLogs
@@ -455,8 +465,8 @@ func newHandleEventFixture() *handleEventFixture {
 	forwardedId := "fwd-msg-id"
 	testS3 := NewTestS3()
 	testS3.outputMsg = testMsg
-	testSes := &TestSes{
-		rawEmailOutput: &ses.SendRawEmailOutput{
+	testSesV2 := &TestSesV2{
+		sendEmailOutput: &sesv2.SendEmailOutput{
 			MessageId: &forwardedId,
 		},
 	}
@@ -469,7 +479,7 @@ func newHandleEventFixture() *handleEventFixture {
 		ForwardingAddress: "foo@bar.com",
 		ConfigurationSet:  "bar.com",
 	}
-	h := &Handler{testS3, testSes, opts, logger}
+	h := &Handler{S3: testS3, SesV2: testSesV2, Options: opts, Log: logger}
 	event := &events.SimpleEmailEvent{
 		Records: []events.SimpleEmailRecord{
 			{
@@ -480,7 +490,7 @@ func newHandleEventFixture() *handleEventFixture {
 			},
 		},
 	}
-	return &handleEventFixture{testS3, testSes, event, forwardedId, logs, h}
+	return &handleEventFixture{testS3, testSesV2, event, forwardedId, logs, h}
 }
 
 func TestProcessMesssage(t *testing.T) {
@@ -543,7 +553,7 @@ func TestProcessMesssage(t *testing.T) {
 
 	t.Run("ErrorsIfForwardingMessageFails", func(t *testing.T) {
 		f, sesInfo, msgKey, ctx := setup()
-		f.ses.rawEmailErr = errors.New("SES error")
+		f.sesv2.sendEmailErr = errors.New("SES error")
 
 		f.h.processMessage(ctx, sesInfo)
 
