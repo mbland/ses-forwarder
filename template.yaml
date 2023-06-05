@@ -23,9 +23,11 @@ Resources:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Metadata:
       BuildMethod: makefile
+    DependsOn: FunctionLogs
     Properties:
       Handler: ses-forwarder-lambda
       Runtime: go1.x
+      FunctionName: !Sub "${AWS::StackName}-function"
       Policies:
         - AWSLambdaBasicExecutionRole
         - Statement:
@@ -51,6 +53,14 @@ Resources:
           SENDER_ADDRESS: !Sub "${AWS::StackName}@${EmailDomainName}"
           FORWARDING_ADDRESS: !Ref ForwardingAddress
           CONFIGURATION_SET: !Ref SendingConfigurationSet
+
+  FunctionLogs:
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-logs-loggroup.html#cfn-logs-loggroup-retentionindays
+    # https://awslabs.github.io/serverless-rules/rules/lambda/log_retention/
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-function"
+      RetentionInDays: 14
 
   BucketPutPolicy:
     # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-policy.html
