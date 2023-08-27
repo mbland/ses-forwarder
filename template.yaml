@@ -25,8 +25,11 @@ Resources:
       BuildMethod: makefile
     DependsOn: FunctionLogs
     Properties:
-      Handler: ses-forwarder-lambda
-      Runtime: go1.x
+      Handler: bootstrap
+      # https://aws.amazon.com/blogs/compute/migrating-aws-lambda-functions-from-the-go1-x-runtime-to-the-custom-runtime-on-amazon-linux-2/
+      Runtime: provided.al2
+      Architectures:
+        - "arm64"
       FunctionName: !Sub "${AWS::StackName}-function"
       Policies:
         - AWSLambdaBasicExecutionRole
