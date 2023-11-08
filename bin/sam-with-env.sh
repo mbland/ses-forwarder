@@ -27,4 +27,15 @@ PARAMETER_OVERRIDES=(
 )
 
 export SAM_CLI_TELEMETRY=0
-exec sam "${@}" --parameter-overrides "${PARAMETER_OVERRIDES[*]}"
+
+FLAGS=()
+
+if [[ "$1" == "deploy" || "$1" == "delete" ]]; then
+    FLAGS+=('--stack-name' "${STACK_NAME:?}")
+fi
+
+if [[ "$1" == "deploy" || "$2" == "start-api" ]]; then
+    FLAGS+=('--parameter-overrides' "${PARAMETER_OVERRIDES[*]}")
+fi
+
+exec sam "${@}" "${FLAGS[@]}"
